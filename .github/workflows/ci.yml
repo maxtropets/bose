@@ -1,0 +1,43 @@
+name: Continuous Integration
+
+on:
+  pull_request:
+  workflow_dispatch:
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !contains(github.ref, 'main')}}
+
+permissions: read-all
+
+jobs:
+  ci:
+    name: "CI" # CI Checks, Clang Tidy, Python package tests, Doc build, Unit tests, Partitions tests
+    runs-on: ubuntu
+    container:
+      image: mcr.microsoft.com/azurelinux/base/core:3.0
+      options: --user root --publish-all --cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_PTRACE
+
+    steps:
+      - name: "Checkout dependencies"
+        shell: bash
+        run: |
+          set -ex
+          gpg --import /etc/pki/rpm-gpg/MICROSOFT-RPM-GPG-KEY
+          tdnf -y update
+          tdnf -y install ca-certificates git
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: "Install dependencies"
+        shell: bash
+        run: |
+          tdnf -y install rust
+
+      - name: "Run CI checks"
+        shell: bash
+        run: |
+          cargo fmt -- --check
