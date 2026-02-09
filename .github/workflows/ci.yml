@@ -20,17 +20,20 @@ jobs:
     runs-on: ubuntu-slim
 
     steps:
-      - name: "Install Rust"
-        shell: bash
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: "Setup"
+        shell: bash
+        run: |
+          ./scripts/setup-ubuntu.sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+          ./scripts/setup-openssl.sh
 
       - name: "Run CI checks"
         shell: bash
         run: |
           cargo fmt -- --check
+          cargo test
