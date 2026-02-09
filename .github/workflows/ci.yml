@@ -28,7 +28,7 @@ jobs:
         shell: bash
         run: |
           set -ex
-          ./scripts/setup-ubuntu.sh
+          sudo ./scripts/setup-ubuntu.sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: "Run CI checks"
