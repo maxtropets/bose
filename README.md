@@ -1,11 +1,14 @@
 # bose
+
 Better COSE.
 
 Used purely in research purposes, not intended for production use (yet).
 
 ## How-to
 
-Only tested on Azure Linux 3.0, with OpenSLL 3.5.
+Targeting Azure Linux 4.0 with OpenSLL 3.5, to enable PQC.
+
+Currently developed on AL 3.0, CI on cheap Ubuntu.
 
 ### How to use with custom OpenSSL version
 
