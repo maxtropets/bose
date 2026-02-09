@@ -48,17 +48,23 @@ jobs:
           set -ex
           cargo fmt -- --check
       
-      - name: "Setup OpenSSL"
-        if: ${{ (github.event.action == 'labeled' && github.event.label.name == 'run-tests') || (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'run-tests')) || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
+      # # To be enabled when OpenSSL 3.3 supported
+      # - name: "Run tests"
+      #   shell: bash
+      #   run: |
+      #     set -ex
+      #     cargo test
+
+      - name: "Build OpenSSL 3.5"
+        if: ${{ (github.event.action == 'labeled' && github.event.label.name == 'test-ossl-3.5') || (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'test-ossl-3.5')) || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
         shell: bash
         run: |
-          set -e
+          set -ex
           echo "Building OpenSSL..."
           ./scripts/setup-openssl.sh > /dev/null 2>&1
-          echo "OpenSSL built successfully."
 
-      - name: "Run tests"
-        if: ${{ (github.event.action == 'labeled' && github.event.label.name == 'run-tests') || (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'run-tests')) || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
+      - name: "Run tests against OpenSSL 3.5"
+        if: ${{ (github.event.action == 'labeled' && github.event.label.name == 'test-ossl-3.5') || (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'test-ossl-3.5')) || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
         shell: bash
         env:
           OPENSSL_INCLUDE_DIR: ${{ github.workspace }}/openssl-3.5.5/include
