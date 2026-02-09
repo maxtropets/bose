@@ -1,22 +1,14 @@
-use crate::ossl_wrappers::{SigningContext, SigningKey};
+use crate::ossl_wrappers::{EvpMdContext, EvpKey, MdCtxPurpose};
 
 use openssl_sys as ossl;
 use std::ptr;
 
-pub fn sign(key: &SigningKey, msg: &[u8]) -> Result<Vec<u8>, String> {
+pub fn sign(key: &EvpKey, msg: &[u8]) -> Result<Vec<u8>, String> {
     unsafe {
-        let ctx = SigningContext::new(&key)?;
-        let res =
-            ossl::EVP_PKEY_sign_message_init(ctx.ctx, key.sig, ptr::null_mut());
-        if res != 1 {
-            return Err(format!(
-                "Failed to sign: init message ctx, err: {}",
-                res
-            ));
-        }
+        let ctx = EvpMdContext::new(&key, MdCtxPurpose::Sign)?;
 
         let mut sig_size: usize = 0;
-        let res = ossl::EVP_PKEY_sign(
+        let res = ossl::EVP_DigestSign(
             ctx.ctx,
             ptr::null_mut(),
             &mut sig_size,
@@ -28,7 +20,7 @@ pub fn sign(key: &SigningKey, msg: &[u8]) -> Result<Vec<u8>, String> {
         }
 
         let mut sig = vec![0u8; sig_size];
-        let res = ossl::EVP_PKEY_sign(
+        let res = ossl::EVP_DigestSign(
             ctx.ctx,
             sig.as_mut_ptr(),
             &mut sig_size,
@@ -38,6 +30,10 @@ pub fn sign(key: &SigningKey, msg: &[u8]) -> Result<Vec<u8>, String> {
         if res != 1 {
             return Err(format!("Failed to sign: sign, err: {}", res));
         }
+
+        // Not always fixed, e.g. for EC keys. More on this here:
+        // https://docs.openssl.org/3.0/man3/EVP_DigestSignInit/#description.
+        sig.truncate(sig_size);
 
         Ok(sig)
     }
