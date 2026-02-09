@@ -5,6 +5,11 @@ name: Continuous Integration
 
 on:
   pull_request:
+    types:
+      - labeled
+      - synchronize
+      - opened
+      - reopened
   workflow_dispatch:
   merge_group:
 
@@ -24,11 +29,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: "Setup checks"
+      - name: "Install dependencies"
         shell: bash
         run: |
           set -ex
-          sudo --preserve-env=HOME ./scripts/setup-ubuntu.sh
+          sudo ./scripts/setup-ubuntu.sh
+
+      - name: "Install Rust"
+        shell: bash
+        run: |
+          set -ex
+          ./scripts/setup-rust.sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: "Run CI checks"
@@ -38,16 +49,21 @@ jobs:
           cargo fmt -- --check
       
       - name: "Setup OpenSSL"
+        if: ${{ (github.event.action == 'labeled' && github.event.label.name == 'run-tests') || (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'run-tests')) || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
         shell: bash
         run: |
-          set -ex
-          sudo --preserve-env=HOME ./scripts/setup-openssl.sh
+          set -e
+          echo "Building OpenSSL..."
+          ./scripts/setup-openssl.sh > /dev/null 2>&1
+          echo "OpenSSL built successfully."
 
       - name: "Run tests"
+        if: ${{ (github.event.action == 'labeled' && github.event.label.name == 'run-tests') || (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'run-tests')) || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
         shell: bash
         env:
-          OPENSSL_DIR: /opt/openssl
-          LD_PRELOAD: /opt/openssl/lib64/libcrypto.so:/opt/openssl/lib64/libssl.so
+          OPENSSL_INCLUDE_DIR: ${{ github.workspace }}/openssl-3.5.5/include
+          OPENSSL_LIB_DIR: ${{ github.workspace }}/openssl-3.5.5
+          LD_PRELOAD: ${{ github.workspace }}/openssl-3.5.5/libcrypto.so:${{ github.workspace }}/openssl-3.5.5/libssl.so
         run: |
           set -ex
           cargo test
