@@ -1,76 +1,189 @@
 use openssl_sys as ossl;
 use std::ffi::CString;
+use std::marker::PhantomData;
 use std::ptr;
 
 #[derive(Debug)]
-pub struct SigningKey {
+pub struct EvpKey {
     pub key: *mut ossl::EVP_PKEY,
-    pub sig: *mut ossl::EVP_SIGNATURE,
 }
 
-impl SigningKey {
-    pub fn new(alg: &str) -> Result<Self, String> {
-        let c_alg = CString::new(alg).unwrap();
-        unsafe {
-            let key = ossl::EVP_PKEY_Q_keygen(
-                ptr::null_mut(),
-                ptr::null_mut(),
-                c_alg.as_ptr(),
-            );
-            if key.is_null() {
-                return Err("Failed to create signing key".to_string());
-            }
+#[cfg(feature = "pqc")]
+pub enum WhichMLDSA {
+    P44,
+    P65,
+    P87,
+}
 
-            let sig = ossl::EVP_SIGNATURE_fetch(
-                ptr::null_mut(),
-                c_alg.as_ptr(),
-                ptr::null_mut(),
-            );
-            if sig.is_null() {
-                ossl::EVP_PKEY_free(key);
-                return Err("Failed to create signing algorithm".to_string());
-            }
-
-            Ok(SigningKey { key, sig })
+#[cfg(feature = "pqc")]
+impl WhichMLDSA {
+    fn openssl_str(&self) -> &'static str {
+        match self {
+            WhichMLDSA::P44 => "ML-DSA-44",
+            WhichMLDSA::P65 => "ML-DSA-65",
+            WhichMLDSA::P87 => "ML-DSA-87",
         }
     }
 }
 
-impl Drop for SigningKey {
+pub enum WhichEC {
+    P256,
+    P384,
+    P521,
+}
+
+impl WhichEC {
+    fn openssl_str(&self) -> &'static str {
+        match self {
+            WhichEC::P256 => "P-256",
+            WhichEC::P384 => "P-384",
+            WhichEC::P521 => "P-521",
+        }
+    }
+}
+
+pub enum KeyInitData {
+    #[cfg(feature = "pqc")]
+    MLDSA(WhichMLDSA),
+    EC(WhichEC),
+}
+
+impl EvpKey {
+    pub fn new(data: KeyInitData) -> Result<Self, String> {
+        unsafe {
+            let key = match data {
+                #[cfg(feature = "pqc")]
+                KeyInitData::MLDSA(which) => {
+                    let alg = CString::new(which.openssl_str()).unwrap();
+                    ossl::EVP_PKEY_Q_keygen(
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                        alg.as_ptr(),
+                    )
+                }
+                KeyInitData::EC(which) => {
+                    let crv = CString::new(which.openssl_str()).unwrap();
+                    let alg = CString::new("EC").unwrap();
+                    ossl::EVP_PKEY_Q_keygen(
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                        alg.as_ptr(),
+                        crv.as_ptr(),
+                    )
+                }
+            };
+
+            if key.is_null() {
+                return Err("Failed to create signing key".to_string());
+            }
+
+            Ok(EvpKey { key })
+        }
+    }
+}
+
+impl Drop for EvpKey {
     fn drop(&mut self) {
         unsafe {
             if !self.key.is_null() {
                 ossl::EVP_PKEY_free(self.key);
             }
-            if !self.sig.is_null() {
-                ossl::EVP_SIGNATURE_free(self.sig);
-            }
         }
     }
 }
 
 #[derive(Debug)]
-pub struct SigningContext {
-    pub ctx: *mut ossl::EVP_PKEY_CTX,
+pub struct EvpMdContext<T> {
+    op: PhantomData<T>,
+    pub ctx: *mut ossl::EVP_MD_CTX,
 }
 
-impl SigningContext {
-    pub fn new(key: &SigningKey) -> Result<Self, String> {
+pub struct SignOp;
+pub struct VerifyOp;
+
+pub trait ContextInit {
+    unsafe fn init(
+        ctx: *mut ossl::EVP_MD_CTX,
+        key: *mut ossl::EVP_PKEY,
+    ) -> Result<(), i32>;
+    fn purpose() -> &'static str;
+}
+
+impl ContextInit for SignOp {
+    unsafe fn init(
+        ctx: *mut ossl::EVP_MD_CTX,
+        key: *mut ossl::EVP_PKEY,
+    ) -> Result<(), i32> {
+        let rc = ossl::EVP_DigestSignInit(
+            ctx,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            key,
+        );
+        match rc {
+            1 => Ok(()),
+            err => Err(err),
+        }
+    }
+    fn purpose() -> &'static str {
+        "Sign"
+    }
+}
+
+impl ContextInit for VerifyOp {
+    unsafe fn init(
+        ctx: *mut ossl::EVP_MD_CTX,
+        key: *mut ossl::EVP_PKEY,
+    ) -> Result<(), i32> {
+        let rc = ossl::EVP_DigestVerifyInit(
+            ctx,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            key,
+        );
+        match rc {
+            1 => Ok(()),
+            err => Err(err),
+        }
+    }
+    fn purpose() -> &'static str {
+        "Verify"
+    }
+}
+
+impl<T: ContextInit> EvpMdContext<T> {
+    pub fn new(key: &EvpKey) -> Result<Self, String> {
         unsafe {
-            let ctx = ossl::EVP_PKEY_CTX_new(key.key, ptr::null_mut());
+            let ctx = ossl::EVP_MD_CTX_new();
             if ctx.is_null() {
-                return Err("Failed to sign: create ctx".to_string());
+                return Err(format!(
+                    "Failed to create ctx for: {}",
+                    T::purpose()
+                ));
             }
-            Ok(SigningContext { ctx })
+            if let Err(err) = T::init(ctx, key.key) {
+                ossl::EVP_MD_CTX_free(ctx);
+                return Err(format!(
+                    "Failed to init context for {} with err {}",
+                    T::purpose(),
+                    err
+                ));
+            }
+            Ok(EvpMdContext {
+                op: PhantomData,
+                ctx,
+            })
         }
     }
 }
 
-impl Drop for SigningContext {
+impl<T> Drop for EvpMdContext<T> {
     fn drop(&mut self) {
         unsafe {
             if !self.ctx.is_null() {
-                ossl::EVP_PKEY_CTX_free(self.ctx);
+                ossl::EVP_MD_CTX_free(self.ctx);
             }
         }
     }
@@ -79,16 +192,18 @@ impl Drop for SigningContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn bad_key() {
-        assert!(SigningKey::new("ML-DSA-404").is_err());
+    #[cfg(feature = "pqc")]
+    fn create_ml_dsa_keys() {
+        assert!(EvpKey::new(KeyInitData::MLDSA(WhichMLDSA::P44)).is_ok());
+        assert!(EvpKey::new(KeyInitData::MLDSA(WhichMLDSA::P65)).is_ok());
+        assert!(EvpKey::new(KeyInitData::MLDSA(WhichMLDSA::P87)).is_ok());
     }
 
     #[test]
-    fn good_ml_dsa() {
-        assert!(SigningKey::new("ML-DSA-44").is_ok());
-        assert!(SigningKey::new("ML-DSA-65").is_ok());
-        assert!(SigningKey::new("ML-DSA-87").is_ok());
+    fn create_ec_keys() {
+        assert!(EvpKey::new(KeyInitData::EC(WhichEC::P256)).is_ok());
+        assert!(EvpKey::new(KeyInitData::EC(WhichEC::P384)).is_ok());
+        assert!(EvpKey::new(KeyInitData::EC(WhichEC::P521)).is_ok());
     }
 }
