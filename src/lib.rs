@@ -15,10 +15,7 @@ mod tests {
         let key = EvpKey::new(key_data).unwrap();
 
         let sig = sign(&key, &msg).unwrap();
-        println!("key ptr: {:?}, signature length: {:?}", key, sig.len());
-
-        let res = verify(&key, &sig, &msg).unwrap();
-        println!("Verifying message result: {}", res);
+        assert!(verify(&key, &sig, &msg).unwrap());
     }
 
     #[cfg(feature = "pqc")]

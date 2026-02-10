@@ -1,5 +1,6 @@
 use openssl_sys as ossl;
 use std::ffi::CString;
+use std::marker::PhantomData;
 use std::ptr;
 
 #[derive(Debug)]
@@ -81,52 +82,93 @@ impl Drop for EvpKey {
 }
 
 #[derive(Debug)]
-pub struct EvpMdContext {
+pub struct EvpMdContext<T> {
+    op: PhantomData<T>,
     pub ctx: *mut ossl::EVP_MD_CTX,
 }
 
-#[derive(Debug)]
-pub enum MdCtxPurpose {
-    Sign,
-    Verify,
+pub struct SignOp;
+pub struct VerifyOp;
+
+pub trait ContextInit {
+    unsafe fn init(
+        ctx: *mut ossl::EVP_MD_CTX,
+        key: *mut ossl::EVP_PKEY,
+    ) -> Result<(), i32>;
+    fn purpose() -> &'static str;
 }
 
-impl EvpMdContext {
-    pub fn new(key: &EvpKey, purpose: MdCtxPurpose) -> Result<Self, String> {
+impl ContextInit for SignOp {
+    unsafe fn init(
+        ctx: *mut ossl::EVP_MD_CTX,
+        key: *mut ossl::EVP_PKEY,
+    ) -> Result<(), i32> {
+        let rc = ossl::EVP_DigestSignInit(
+            ctx,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            key,
+        );
+        match rc {
+            1 => Ok(()),
+            err => Err(err),
+        }
+    }
+    fn purpose() -> &'static str {
+        "Sign"
+    }
+}
+
+impl ContextInit for VerifyOp {
+    unsafe fn init(
+        ctx: *mut ossl::EVP_MD_CTX,
+        key: *mut ossl::EVP_PKEY,
+    ) -> Result<(), i32> {
+        let rc = ossl::EVP_DigestVerifyInit(
+            ctx,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            key,
+        );
+        match rc {
+            1 => Ok(()),
+            err => Err(err),
+        }
+    }
+    fn purpose() -> &'static str {
+        "Verify"
+    }
+}
+
+impl<T: ContextInit> EvpMdContext<T> {
+    pub fn new(key: &EvpKey) -> Result<Self, String> {
         unsafe {
             let ctx = ossl::EVP_MD_CTX_new();
             if ctx.is_null() {
-                return Err("Failed to sign: create ctx".to_string());
-            }
-            let rc = match purpose {
-                MdCtxPurpose::Sign => ossl::EVP_DigestSignInit(
-                    ctx,
-                    ptr::null_mut(),
-                    ptr::null_mut(),
-                    ptr::null_mut(),
-                    key.key,
-                ),
-                MdCtxPurpose::Verify => ossl::EVP_DigestVerifyInit(
-                    ctx,
-                    ptr::null_mut(),
-                    ptr::null_mut(),
-                    ptr::null_mut(),
-                    key.key,
-                ),
-            };
-            if rc != 1 {
-                ossl::EVP_MD_CTX_free(ctx);
                 return Err(format!(
-                    "Failed to init MD context for {:?}, error: {}",
-                    purpose, rc
+                    "Failed to create ctx for: {}",
+                    T::purpose()
                 ));
             }
-            Ok(EvpMdContext { ctx })
+            if let Err(err) = T::init(ctx, key.key) {
+                ossl::EVP_MD_CTX_free(ctx);
+                return Err(format!(
+                    "Failed to init context for {} with err {}",
+                    T::purpose(),
+                    err
+                ));
+            }
+            Ok(EvpMdContext {
+                op: PhantomData,
+                ctx,
+            })
         }
     }
 }
 
-impl Drop for EvpMdContext {
+impl<T> Drop for EvpMdContext<T> {
     fn drop(&mut self) {
         unsafe {
             if !self.ctx.is_null() {

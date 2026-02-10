@@ -1,11 +1,11 @@
-use crate::ossl_wrappers::{EvpKey, EvpMdContext, MdCtxPurpose};
+use crate::ossl_wrappers::{EvpKey, EvpMdContext, SignOp};
 
 use openssl_sys as ossl;
 use std::ptr;
 
 pub fn sign(key: &EvpKey, msg: &[u8]) -> Result<Vec<u8>, String> {
     unsafe {
-        let ctx = EvpMdContext::new(key, MdCtxPurpose::Sign)?;
+        let ctx = EvpMdContext::<SignOp>::new(key)?;
 
         let mut sig_size: usize = 0;
         let res = ossl::EVP_DigestSign(
