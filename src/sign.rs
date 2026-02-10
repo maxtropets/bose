@@ -5,7 +5,7 @@ use std::ptr;
 
 pub fn sign(key: &EvpKey, msg: &[u8]) -> Result<Vec<u8>, String> {
     unsafe {
-        let ctx = EvpMdContext::new(&key, MdCtxPurpose::Sign)?;
+        let ctx = EvpMdContext::new(key, MdCtxPurpose::Sign)?;
 
         let mut sig_size: usize = 0;
         let res = ossl::EVP_DigestSign(
