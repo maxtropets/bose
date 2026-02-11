@@ -184,8 +184,11 @@ impl EvpKey {
             let mut der_ptr: *mut u8 = ptr::null_mut();
             let len = ossl::i2d_PUBKEY(self.key, &mut der_ptr);
 
-            if len < 0 {
-                return Err("Failed to encode public key to DER".to_string());
+            if len <= 0 || der_ptr.is_null() {
+                return Err(format!(
+                    "Failed to encode public key to DER (rc={})",
+                    len
+                ));
             }
 
             // Copy the DER data into a Vec and free the OpenSSL-allocated memory
@@ -199,14 +202,6 @@ impl EvpKey {
 
             Ok(der)
         }
-    }
-}
-
-impl From<&[u8]> for EvpKey {
-    /// Create an `EvpKey` from DER-encoded SubjectPublicKeyInfo.
-    /// Panics if the DER is invalid or unsupported.
-    fn from(der: &[u8]) -> Self {
-        Self::from_der(der).expect("Failed to create EvpKey from DER")
     }
 }
 
@@ -357,10 +352,10 @@ mod tests {
     }
 
     #[test]
-    fn ec_key_from_trait() {
+    fn ec_key_from_der_p256() {
         let key = EvpKey::new(KeyType::EC(WhichEC::P256)).unwrap();
         let der = key.to_der().unwrap();
-        let imported = EvpKey::from(der.as_slice());
+        let imported = EvpKey::from_der(&der).unwrap();
 
         assert!(matches!(imported.typ, KeyType::EC(WhichEC::P256)));
     }

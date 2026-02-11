@@ -319,7 +319,7 @@ mod tests {
         let signing_key = EvpKey::new(KeyType::EC(WhichEC::P384)).unwrap();
         // Export public key DER and reimport for verification
         let der = signing_key.to_der().unwrap();
-        let verification_key = EvpKey::from(der.as_slice());
+        let verification_key = EvpKey::from_der(&der).unwrap();
 
         let phdr = hex::decode(TEST_PHDR).unwrap();
         let uhdr = b"\xa0";
