@@ -1,12 +1,19 @@
 [package]
-name = "cose-rust"
+name = "bose"
 version = "0.1.0"
 edition = "2024"
 
 [features]
 pqc = []
+
 [lints.rust]
 warnings = "deny"
 
 [dependencies]
+hex = "*"
 openssl-sys = "0.9"
+cborrs = { git = "https://github.com/project-everest/everparse", tag = "v2026.02.04" }
+
+# The everparse repo has multiple crates named "cborrs"; patch to pick nondet.
+[patch."https://github.com/project-everest/everparse"]
+cborrs = { path = ".patched/everparse/src/cbor/pulse/nondet/rust" }
