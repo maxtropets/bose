@@ -3,12 +3,8 @@ use std::ffi::CString;
 use std::marker::PhantomData;
 use std::ptr;
 
-#[derive(Debug)]
-pub struct EvpKey {
-    pub key: *mut ossl::EVP_PKEY,
-}
-
 #[cfg(feature = "pqc")]
+#[derive(Debug)]
 pub enum WhichMLDSA {
     P44,
     P65,
@@ -26,6 +22,7 @@ impl WhichMLDSA {
     }
 }
 
+#[derive(Debug)]
 pub enum WhichEC {
     P256,
     P384,
@@ -42,18 +39,25 @@ impl WhichEC {
     }
 }
 
-pub enum KeyInitData {
+#[derive(Debug)]
+pub enum KeyType {
     #[cfg(feature = "pqc")]
     MLDSA(WhichMLDSA),
     EC(WhichEC),
 }
 
+#[derive(Debug)]
+pub struct EvpKey {
+    pub key: *mut ossl::EVP_PKEY,
+    pub typ: KeyType,
+}
+
 impl EvpKey {
-    pub fn new(data: KeyInitData) -> Result<Self, String> {
+    pub fn new(typ: KeyType) -> Result<Self, String> {
         unsafe {
-            let key = match data {
+            let key = match &typ {
                 #[cfg(feature = "pqc")]
-                KeyInitData::MLDSA(which) => {
+                KeyType::MLDSA(which) => {
                     let alg = CString::new(which.openssl_str()).unwrap();
                     ossl::EVP_PKEY_Q_keygen(
                         ptr::null_mut(),
@@ -61,7 +65,7 @@ impl EvpKey {
                         alg.as_ptr(),
                     )
                 }
-                KeyInitData::EC(which) => {
+                KeyType::EC(which) => {
                     let crv = CString::new(which.openssl_str()).unwrap();
                     let alg = CString::new("EC").unwrap();
                     ossl::EVP_PKEY_Q_keygen(
@@ -77,7 +81,7 @@ impl EvpKey {
                 return Err("Failed to create signing key".to_string());
             }
 
-            Ok(EvpKey { key })
+            Ok(EvpKey { key, typ })
         }
     }
 }
@@ -199,15 +203,15 @@ mod tests {
     #[test]
     #[cfg(feature = "pqc")]
     fn create_ml_dsa_keys() {
-        assert!(EvpKey::new(KeyInitData::MLDSA(WhichMLDSA::P44)).is_ok());
-        assert!(EvpKey::new(KeyInitData::MLDSA(WhichMLDSA::P65)).is_ok());
-        assert!(EvpKey::new(KeyInitData::MLDSA(WhichMLDSA::P87)).is_ok());
+        assert!(EvpKey::new(KeyType::MLDSA(WhichMLDSA::P44)).is_ok());
+        assert!(EvpKey::new(KeyType::MLDSA(WhichMLDSA::P65)).is_ok());
+        assert!(EvpKey::new(KeyType::MLDSA(WhichMLDSA::P87)).is_ok());
     }
 
     #[test]
     fn create_ec_keys() {
-        assert!(EvpKey::new(KeyInitData::EC(WhichEC::P256)).is_ok());
-        assert!(EvpKey::new(KeyInitData::EC(WhichEC::P384)).is_ok());
-        assert!(EvpKey::new(KeyInitData::EC(WhichEC::P521)).is_ok());
+        assert!(EvpKey::new(KeyType::EC(WhichEC::P256)).is_ok());
+        assert!(EvpKey::new(KeyType::EC(WhichEC::P384)).is_ok());
+        assert!(EvpKey::new(KeyType::EC(WhichEC::P521)).is_ok());
     }
 }
