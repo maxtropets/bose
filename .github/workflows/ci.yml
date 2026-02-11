@@ -57,6 +57,12 @@ jobs:
           set -ex
           cargo test
 
+      - name: "Run sanitizer tests"
+        shell: bash
+        run: |
+          set -ex
+          ./scripts/san-test.sh
+
       - name: "Build OpenSSL 3.5"
         if: ${{ (github.event.action == 'labeled' && github.event.label.name == 'test-ossl-3.5') || (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'test-ossl-3.5')) || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
         shell: bash
@@ -75,3 +81,10 @@ jobs:
         run: |
           set -ex
           cargo test --features pqc
+
+      - name: "Run sanitizer tests with PQC"
+        if: ${{ (github.event.action == 'labeled' && github.event.label.name == 'test-ossl-3.5') || (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'test-ossl-3.5')) || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
+        shell: bash
+        run: |
+          set -ex
+          ./scripts/san-test.sh pqc
