@@ -313,6 +313,25 @@ mod tests {
         assert!(cose_verify1(&key, &envelope, None).is_err());
     }
 
+    #[test]
+    fn cose_with_der_imported_key() {
+        // Create key for signing
+        let signing_key = EvpKey::new(KeyType::EC(WhichEC::P384)).unwrap();
+        // Export public key DER and reimport for verification
+        let der = signing_key.to_der().unwrap();
+        let verification_key = EvpKey::from(der.as_slice());
+
+        let phdr = hex::decode(TEST_PHDR).unwrap();
+        let uhdr = b"\xa0";
+        let payload = b"test with DER-imported key";
+
+        // Sign with original key (has private key)
+        let envelope =
+            cose_sign1(&signing_key, &phdr, uhdr, payload, false).unwrap();
+        // Verify with DER-imported public key
+        assert!(cose_verify1(&verification_key, &envelope, None).unwrap());
+    }
+
     #[cfg(feature = "pqc")]
     mod pqc_tests {
         use super::*;
@@ -327,6 +346,26 @@ mod tests {
         #[test]
         fn cose_mldsa87() {
             sign_verify_cose(KeyType::MLDSA(WhichMLDSA::P87));
+        }
+
+        #[test]
+        fn cose_mldsa_with_der_imported_key() {
+            // Create ML-DSA key for signing
+            let signing_key =
+                EvpKey::new(KeyType::MLDSA(WhichMLDSA::P65)).unwrap();
+            // Export public key DER and reimport for verification
+            let der = signing_key.to_der().unwrap();
+            let verification_key = EvpKey::from_der(&der).unwrap();
+
+            let phdr = hex::decode(TEST_PHDR).unwrap();
+            let uhdr = b"\xa0";
+            let payload = b"ML-DSA with DER-imported key";
+
+            // Sign with original key (has private key)
+            let envelope =
+                cose_sign1(&signing_key, &phdr, uhdr, payload, false).unwrap();
+            // Verify with DER-imported public key
+            assert!(cose_verify1(&verification_key, &envelope, None).unwrap());
         }
     }
 }

@@ -12,6 +12,7 @@ warnings = "deny"
 [dependencies]
 hex = "0.4"
 openssl-sys = "0.9"
+openssl = "0.10"
 cborrs = { git = "https://github.com/project-everest/everparse", tag = "v2026.02.04" }
 
 # The everparse repo has multiple crates named "cborrs"; patch to pick nondet.
