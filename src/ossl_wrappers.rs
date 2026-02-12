@@ -421,6 +421,30 @@ mod tests {
     }
 
     #[test]
+    fn from_der_private_rejects_garbage() {
+        assert!(EvpKey::from_der_private(&[0xde, 0xad, 0xbe, 0xef]).is_err());
+    }
+
+    #[test]
+    fn ec_key_private_der_roundtrip() {
+        for which in [WhichEC::P256, WhichEC::P384, WhichEC::P521] {
+            let key = EvpKey::new(KeyType::EC(which)).unwrap();
+            let priv_der = key.to_der_private().unwrap();
+            let imported = EvpKey::from_der_private(&priv_der).unwrap();
+            assert!(
+                matches!(imported.typ, KeyType::EC(_)),
+                "Expected EC key type"
+            );
+
+            // Public key extracted from the reimported private key must
+            // match the original.
+            let pub1 = key.to_der().unwrap();
+            let pub2 = imported.to_der().unwrap();
+            assert_eq!(pub1, pub2);
+        }
+    }
+
+    #[test]
     #[cfg(feature = "pqc")]
     fn ml_dsa_key_from_der_roundtrip() {
         for which in [WhichMLDSA::P44, WhichMLDSA::P65, WhichMLDSA::P87] {
@@ -433,6 +457,24 @@ mod tests {
             );
             let der2 = imported.to_der().unwrap();
             assert_eq!(der, der2);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "pqc")]
+    fn ml_dsa_key_private_der_roundtrip() {
+        for which in [WhichMLDSA::P44, WhichMLDSA::P65, WhichMLDSA::P87] {
+            let key = EvpKey::new(KeyType::MLDSA(which)).unwrap();
+            let priv_der = key.to_der_private().unwrap();
+            let imported = EvpKey::from_der_private(&priv_der).unwrap();
+            assert!(
+                matches!(imported.typ, KeyType::MLDSA(_)),
+                "Expected ML-DSA key type"
+            );
+
+            let pub1 = key.to_der().unwrap();
+            let pub2 = imported.to_der().unwrap();
+            assert_eq!(pub1, pub2);
         }
     }
 
