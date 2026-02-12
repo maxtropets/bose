@@ -121,6 +121,36 @@ impl EvpKey {
         Ok(EvpKey { key: raw, typ })
     }
 
+    /// Create an `EvpKey` from a DER-encoded private key
+    /// (PKCS#8 or traditional format).
+    /// Automatically detects key type (EC curve or ML-DSA variant).
+    pub fn from_der_private(der: &[u8]) -> Result<Self, String> {
+        let raw = unsafe {
+            let mut ptr = der.as_ptr();
+            let key = ossl::d2i_AutoPrivateKey(
+                ptr::null_mut(),
+                &mut ptr,
+                der.len() as i64,
+            );
+            if key.is_null() {
+                return Err("Failed to parse DER private key".to_string());
+            }
+            key
+        };
+
+        let typ = match Self::detect_key_type_raw(raw) {
+            Ok(t) => t,
+            Err(e) => {
+                unsafe {
+                    ossl::EVP_PKEY_free(raw);
+                }
+                return Err(e);
+            }
+        };
+
+        Ok(EvpKey { key: raw, typ })
+    }
+
     fn detect_key_type_raw(
         pkey: *mut ossl::EVP_PKEY,
     ) -> Result<KeyType, String> {
@@ -192,6 +222,31 @@ impl EvpKey {
             }
 
             // Copy the DER data into a Vec and free the OpenSSL-allocated memory
+            let der_slice = std::slice::from_raw_parts(der_ptr, len as usize);
+            let der = der_slice.to_vec();
+            ossl::CRYPTO_free(
+                der_ptr as *mut std::ffi::c_void,
+                concat!(file!(), "\0").as_ptr() as *const i8,
+                line!() as i32,
+            );
+
+            Ok(der)
+        }
+    }
+
+    /// Export the private key as DER-encoded traditional format.
+    pub fn to_der_private(&self) -> Result<Vec<u8>, String> {
+        unsafe {
+            let mut der_ptr: *mut u8 = ptr::null_mut();
+            let len = ossl::i2d_PrivateKey(self.key, &mut der_ptr);
+
+            if len <= 0 || der_ptr.is_null() {
+                return Err(format!(
+                    "Failed to encode private key to DER (rc={})",
+                    len
+                ));
+            }
+
             let der_slice = std::slice::from_raw_parts(der_ptr, len as usize);
             let der = der_slice.to_vec();
             ossl::CRYPTO_free(
