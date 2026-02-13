@@ -3,11 +3,18 @@ use std::ffi::CString;
 use std::marker::PhantomData;
 use std::ptr;
 
-#[cfg(feature = "pqc")]
+// Not exposed by openssl-sys 0.9, but available at link time (OpenSSL 3.0+).
 unsafe extern "C" {
     fn EVP_PKEY_is_a(
         pkey: *const ossl::EVP_PKEY,
         name: *const std::ffi::c_char,
+    ) -> std::ffi::c_int;
+
+    fn EVP_PKEY_get_group_name(
+        pkey: *const ossl::EVP_PKEY,
+        name: *mut std::ffi::c_char,
+        name_sz: usize,
+        gname_len: *mut usize,
     ) -> std::ffi::c_int;
 }
 
@@ -43,6 +50,14 @@ impl WhichEC {
             WhichEC::P256 => "P-256",
             WhichEC::P384 => "P-384",
             WhichEC::P521 => "P-521",
+        }
+    }
+
+    fn openssl_group_name(&self) -> &'static str {
+        match self {
+            WhichEC::P256 => "prime256v1",
+            WhichEC::P384 => "secp384r1",
+            WhichEC::P521 => "secp521r1",
         }
     }
 }
@@ -95,8 +110,7 @@ impl EvpKey {
 
     /// Create an `EvpKey` from a DER-encoded SubjectPublicKeyInfo.
     /// Automatically detects key type (EC curve or ML-DSA variant).
-    pub fn from_der(der: &[u8]) -> Result<Self, String> {
-        // Parse DER using raw OpenSSL API
+    pub fn from_der_public(der: &[u8]) -> Result<Self, String> {
         let key = unsafe {
             let mut ptr = der.as_ptr();
             let key =
@@ -107,7 +121,6 @@ impl EvpKey {
             key
         };
 
-        // Detect key type using raw OpenSSL APIs
         let typ = match Self::detect_key_type_raw(key) {
             Ok(t) => t,
             Err(e) => {
@@ -155,62 +168,47 @@ impl EvpKey {
         pkey: *mut ossl::EVP_PKEY,
     ) -> Result<KeyType, String> {
         unsafe {
-            let key_id = ossl::EVP_PKEY_id(pkey);
-
-            // EC key type (NID_X9_62_id_ecPublicKey = 408)
-            if key_id == 408 {
-                let ec_key = ossl::EVP_PKEY_get1_EC_KEY(pkey);
-                if ec_key.is_null() {
-                    return Err("Failed to get EC key".to_string());
+            // EC: check algorithm, then match curve by group name.
+            let ec = CString::new("EC").unwrap();
+            if EVP_PKEY_is_a(pkey as *const _, ec.as_ptr()) == 1 {
+                let mut buf = [0u8; 64];
+                let mut len: usize = 0;
+                if EVP_PKEY_get_group_name(
+                    pkey as *const _,
+                    buf.as_mut_ptr() as *mut std::ffi::c_char,
+                    buf.len(),
+                    &mut len,
+                ) != 1
+                {
+                    return Err("Failed to get EC group name".to_string());
                 }
+                let group = std::str::from_utf8(&buf[..len])
+                    .map_err(|_| "EC group name is not UTF-8".to_string())?;
 
-                let group = ossl::EC_KEY_get0_group(ec_key);
-                if group.is_null() {
-                    ossl::EC_KEY_free(ec_key);
-                    return Err("Failed to get EC group".to_string());
-                }
-
-                let nid = ossl::EC_GROUP_get_curve_name(group);
-                ossl::EC_KEY_free(ec_key);
-
-                let which = match nid {
-                    415 => WhichEC::P256, // NID_X9_62_prime256v1
-                    715 => WhichEC::P384, // NID_secp384r1
-                    716 => WhichEC::P521, // NID_secp521r1
-                    _ => {
-                        return Err(format!(
-                            "Unsupported EC curve NID: {}",
-                            nid
-                        ));
+                for variant in [WhichEC::P256, WhichEC::P384, WhichEC::P521] {
+                    if group == variant.openssl_group_name() {
+                        return Ok(KeyType::EC(variant));
                     }
-                };
-                return Ok(KeyType::EC(which));
+                }
+                return Err(format!("Unsupported EC curve: {}", group));
             }
 
+            // ML-DSA: each variant has its own algorithm name.
             #[cfg(feature = "pqc")]
-            {
-                let mldsa_variants = [
-                    ("ML-DSA-44", WhichMLDSA::P44),
-                    ("ML-DSA-65", WhichMLDSA::P65),
-                    ("ML-DSA-87", WhichMLDSA::P87),
-                ];
-                for (name, variant) in mldsa_variants {
-                    let cname = CString::new(name).unwrap();
-                    let is_a = EVP_PKEY_is_a(pkey as *const _, cname.as_ptr());
-                    if is_a == 1 {
-                        return Ok(KeyType::MLDSA(variant));
-                    }
+            for variant in [WhichMLDSA::P44, WhichMLDSA::P65, WhichMLDSA::P87] {
+                let cname = CString::new(variant.openssl_str()).unwrap();
+                if EVP_PKEY_is_a(pkey as *const _, cname.as_ptr()) == 1 {
+                    return Ok(KeyType::MLDSA(variant));
                 }
             }
 
-            Err(format!("Unsupported key type (id={})", key_id))
+            Err("Unsupported key type".to_string())
         }
     }
 
     /// Export the public key as DER-encoded SubjectPublicKeyInfo.
-    pub fn to_der(&self) -> Result<Vec<u8>, String> {
+    pub fn to_der_public(&self) -> Result<Vec<u8>, String> {
         unsafe {
-            // Use raw OpenSSL API to avoid needing from_ptr()
             let mut der_ptr: *mut u8 = ptr::null_mut();
             let len = ossl::i2d_PUBKEY(self.key, &mut der_ptr);
 
@@ -258,6 +256,36 @@ impl EvpKey {
             Ok(der)
         }
     }
+
+    /// Compute the EC field-element byte size from the key's bit size.
+    /// Returns an error if the key is not an EC key.
+    pub fn ec_field_size(&self) -> Result<usize, String> {
+        if !matches!(self.typ, KeyType::EC(_)) {
+            return Err("ec_field_size called on a non-EC key".to_string());
+        }
+        unsafe {
+            let bits = ossl::EVP_PKEY_bits(self.key);
+            if bits <= 0 {
+                return Err("EVP_PKEY_bits failed".to_string());
+            }
+            Ok(((bits + 7) / 8) as usize)
+        }
+    }
+
+    /// Return the OpenSSL digest matching the key's COSE algorithm.
+    /// Returns null for algorithms that do not use a separate digest
+    /// (e.g. ML-DSA).
+    pub fn digest(&self) -> *const ossl::EVP_MD {
+        unsafe {
+            match &self.typ {
+                KeyType::EC(WhichEC::P256) => ossl::EVP_sha256(),
+                KeyType::EC(WhichEC::P384) => ossl::EVP_sha384(),
+                KeyType::EC(WhichEC::P521) => ossl::EVP_sha512(),
+                #[cfg(feature = "pqc")]
+                KeyType::MLDSA(_) => ptr::null(),
+            }
+        }
+    }
 }
 
 impl Drop for EvpKey {
@@ -267,6 +295,127 @@ impl Drop for EvpKey {
                 ossl::EVP_PKEY_free(self.key);
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ECDSA signature format conversion (DER <-> IEEE P1363 fixed-size)
+// using OpenSSL's ECDSA_SIG API.
+//
+// OpenSSL produces/consumes DER-encoded ECDSA signatures:
+//     SEQUENCE { INTEGER r, INTEGER s }
+//
+// COSE (RFC 9053) requires the fixed-size (r || s) representation.
+// ---------------------------------------------------------------------------
+
+/// Convert a DER-encoded ECDSA signature to fixed-size (r || s).
+pub fn ecdsa_der_to_fixed(
+    der: &[u8],
+    field_size: usize,
+) -> Result<Vec<u8>, String> {
+    unsafe {
+        let mut p = der.as_ptr();
+        let sig = ossl::d2i_ECDSA_SIG(
+            ptr::null_mut(),
+            &mut p,
+            der.len() as std::ffi::c_long,
+        );
+        if sig.is_null() {
+            return Err("Failed to parse DER ECDSA signature".to_string());
+        }
+
+        let mut r: *const ossl::BIGNUM = ptr::null();
+        let mut s: *const ossl::BIGNUM = ptr::null();
+        ossl::ECDSA_SIG_get0(sig, &mut r, &mut s);
+
+        let mut fixed = vec![0u8; field_size * 2];
+        let rc_r = ossl::BN_bn2binpad(
+            r,
+            fixed.as_mut_ptr(),
+            field_size as std::ffi::c_int,
+        );
+        let rc_s = ossl::BN_bn2binpad(
+            s,
+            fixed[field_size..].as_mut_ptr(),
+            field_size as std::ffi::c_int,
+        );
+        ossl::ECDSA_SIG_free(sig);
+
+        if rc_r != field_size as std::ffi::c_int
+            || rc_s != field_size as std::ffi::c_int
+        {
+            return Err("BN_bn2binpad failed for ECDSA r or s".to_string());
+        }
+
+        Ok(fixed)
+    }
+}
+
+/// Convert a fixed-size (r || s) ECDSA signature to DER.
+pub fn ecdsa_fixed_to_der(
+    fixed: &[u8],
+    field_size: usize,
+) -> Result<Vec<u8>, String> {
+    if fixed.len() != field_size * 2 {
+        return Err(format!(
+            "Expected {} byte ECDSA signature, got {}",
+            field_size * 2,
+            fixed.len()
+        ));
+    }
+
+    unsafe {
+        let r = ossl::BN_bin2bn(
+            fixed.as_ptr(),
+            field_size as std::ffi::c_int,
+            ptr::null_mut(),
+        );
+        if r.is_null() {
+            return Err("BN_bin2bn failed for ECDSA r".to_string());
+        }
+
+        let s = ossl::BN_bin2bn(
+            fixed[field_size..].as_ptr(),
+            field_size as std::ffi::c_int,
+            ptr::null_mut(),
+        );
+        if s.is_null() {
+            ossl::BN_free(r);
+            return Err("BN_bin2bn failed for ECDSA s".to_string());
+        }
+
+        let sig = ossl::ECDSA_SIG_new();
+        if sig.is_null() {
+            ossl::BN_free(r);
+            ossl::BN_free(s);
+            return Err("ECDSA_SIG_new failed".to_string());
+        }
+
+        // ECDSA_SIG_set0 takes ownership of r and s on success.
+        if ossl::ECDSA_SIG_set0(sig, r, s) != 1 {
+            ossl::ECDSA_SIG_free(sig);
+            // set0 did not take ownership, so free r/s.
+            ossl::BN_free(r);
+            ossl::BN_free(s);
+            return Err("ECDSA_SIG_set0 failed".to_string());
+        }
+
+        let mut out_ptr: *mut u8 = ptr::null_mut();
+        let len = ossl::i2d_ECDSA_SIG(sig, &mut out_ptr);
+        ossl::ECDSA_SIG_free(sig);
+
+        if len <= 0 || out_ptr.is_null() {
+            return Err("i2d_ECDSA_SIG failed".to_string());
+        }
+
+        let der = std::slice::from_raw_parts(out_ptr, len as usize).to_vec();
+        ossl::CRYPTO_free(
+            out_ptr as *mut std::ffi::c_void,
+            concat!(file!(), "\0").as_ptr() as *const i8,
+            line!() as i32,
+        );
+
+        Ok(der)
     }
 }
 
@@ -282,6 +431,7 @@ pub struct VerifyOp;
 pub trait ContextInit {
     fn init(
         ctx: *mut ossl::EVP_MD_CTX,
+        md: *const ossl::EVP_MD,
         key: *mut ossl::EVP_PKEY,
     ) -> Result<(), i32>;
     fn purpose() -> &'static str;
@@ -290,13 +440,14 @@ pub trait ContextInit {
 impl ContextInit for SignOp {
     fn init(
         ctx: *mut ossl::EVP_MD_CTX,
+        md: *const ossl::EVP_MD,
         key: *mut ossl::EVP_PKEY,
     ) -> Result<(), i32> {
         unsafe {
             let rc = ossl::EVP_DigestSignInit(
                 ctx,
                 ptr::null_mut(),
-                ptr::null_mut(),
+                md,
                 ptr::null_mut(),
                 key,
             );
@@ -314,13 +465,14 @@ impl ContextInit for SignOp {
 impl ContextInit for VerifyOp {
     fn init(
         ctx: *mut ossl::EVP_MD_CTX,
+        md: *const ossl::EVP_MD,
         key: *mut ossl::EVP_PKEY,
     ) -> Result<(), i32> {
         unsafe {
             let rc = ossl::EVP_DigestVerifyInit(
                 ctx,
                 ptr::null_mut(),
-                ptr::null_mut(),
+                md,
                 ptr::null_mut(),
                 key,
             );
@@ -345,7 +497,7 @@ impl<T: ContextInit> EvpMdContext<T> {
                     T::purpose()
                 ));
             }
-            if let Err(err) = T::init(ctx, key.key) {
+            if let Err(err) = T::init(ctx, key.digest(), key.key) {
                 ossl::EVP_MD_CTX_free(ctx);
                 return Err(format!(
                     "Failed to init context for {} with err {}",
@@ -393,15 +545,15 @@ mod tests {
     fn ec_key_from_der_roundtrip() {
         for which in [WhichEC::P256, WhichEC::P384, WhichEC::P521] {
             let key = EvpKey::new(KeyType::EC(which)).unwrap();
-            let der = key.to_der().unwrap();
-            let imported = EvpKey::from_der(&der).unwrap();
+            let der = key.to_der_public().unwrap();
+            let imported = EvpKey::from_der_public(&der).unwrap();
             assert!(
                 matches!(imported.typ, KeyType::EC(_)),
                 "Expected EC key type"
             );
 
             // Verify the reimported key exports the same DER
-            let der2 = imported.to_der().unwrap();
+            let der2 = imported.to_der_public().unwrap();
             assert_eq!(der, der2);
         }
     }
@@ -409,15 +561,15 @@ mod tests {
     #[test]
     fn ec_key_from_der_p256() {
         let key = EvpKey::new(KeyType::EC(WhichEC::P256)).unwrap();
-        let der = key.to_der().unwrap();
-        let imported = EvpKey::from_der(&der).unwrap();
+        let der = key.to_der_public().unwrap();
+        let imported = EvpKey::from_der_public(&der).unwrap();
 
         assert!(matches!(imported.typ, KeyType::EC(WhichEC::P256)));
     }
 
     #[test]
     fn from_der_rejects_garbage() {
-        assert!(EvpKey::from_der(&[0xde, 0xad, 0xbe, 0xef]).is_err());
+        assert!(EvpKey::from_der_public(&[0xde, 0xad, 0xbe, 0xef]).is_err());
     }
 
     #[test]
@@ -442,8 +594,8 @@ mod tests {
 
             // Public key extracted from the reimported private key must
             // match the original.
-            let pub1 = key.to_der().unwrap();
-            let pub2 = imported.to_der().unwrap();
+            let pub1 = key.to_der_public().unwrap();
+            let pub2 = imported.to_der_public().unwrap();
             assert_eq!(pub1, pub2);
         }
     }
@@ -453,13 +605,13 @@ mod tests {
     fn ml_dsa_key_from_der_roundtrip() {
         for which in [WhichMLDSA::P44, WhichMLDSA::P65, WhichMLDSA::P87] {
             let key = EvpKey::new(KeyType::MLDSA(which)).unwrap();
-            let der = key.to_der().unwrap();
-            let imported = EvpKey::from_der(&der).unwrap();
+            let der = key.to_der_public().unwrap();
+            let imported = EvpKey::from_der_public(&der).unwrap();
             assert!(
                 matches!(imported.typ, KeyType::MLDSA(_)),
                 "Expected ML-DSA key type"
             );
-            let der2 = imported.to_der().unwrap();
+            let der2 = imported.to_der_public().unwrap();
             assert_eq!(der, der2);
         }
     }
@@ -480,8 +632,8 @@ mod tests {
             let priv_der2 = imported.to_der_private().unwrap();
             assert_eq!(priv_der, priv_der2);
 
-            let pub1 = key.to_der().unwrap();
-            let pub2 = imported.to_der().unwrap();
+            let pub1 = key.to_der_public().unwrap();
+            let pub2 = imported.to_der_public().unwrap();
             assert_eq!(pub1, pub2);
         }
     }

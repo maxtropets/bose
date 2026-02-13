@@ -16,7 +16,7 @@ pub fn sign(key: &EvpKey, msg: &[u8]) -> Result<Vec<u8>, String> {
             msg.len(),
         );
         if res != 1 {
-            return Err(format!("Failed to sign: get sig size, err: {}", res));
+            return Err(format!("Failed to signature size, err: {}", res));
         }
 
         let mut sig = vec![0u8; sig_size];
@@ -28,7 +28,7 @@ pub fn sign(key: &EvpKey, msg: &[u8]) -> Result<Vec<u8>, String> {
             msg.len(),
         );
         if res != 1 {
-            return Err(format!("Failed to sign: sign, err: {}", res));
+            return Err(format!("Failed to sign, err: {}", res));
         }
 
         // Not always fixed, e.g. for EC keys. More on this here:

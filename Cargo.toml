@@ -1,18 +1,9 @@
-[package]
-name = "bose"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = ["cose-openssl", "cose-openssl-ffi"]
+resolver = "3"
 
-[features]
-pqc = []
-
-[lints.rust]
-warnings = "deny"
-
-[dependencies]
-hex = "0.4"
+[workspace.dependencies]
 openssl-sys = "0.9"
-cborrs = { git = "https://github.com/project-everest/everparse", tag = "v2026.02.04" }
 
 # The everparse repo has multiple crates named "cborrs"; patch to pick nondet.
 [patch."https://github.com/project-everest/everparse"]

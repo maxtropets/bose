@@ -17,7 +17,7 @@ pub fn verify(key: &EvpKey, sig: &[u8], msg: &[u8]) -> Result<bool, String> {
         match res {
             1 => Ok(true),
             0 => Ok(false),
-            err => Err(format!("Verify failed with err: {}", err)),
+            err => Err(format!("Failed to verify signature, err: {}", err)),
         }
     }
 }
