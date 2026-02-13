@@ -27,18 +27,24 @@ if ! echo "$LEAK_OUTPUT" | grep -q "LeakSanitizer: detected memory leaks"; then
     exit 1
 fi
 
+PQC_FEATURES="--features cose-openssl/pqc,cose-openssl-ffi/pqc"
+
 # Run tests based on argument
-if [ "${1:-}" = "pqc" ]; then
+if [ "${1:-}" = "--pqc" ]; then
     # PQC tests with OpenSSL 3.5
-    LD_PRELOAD="openssl-3.5.5/libcrypto.so.3 openssl-3.5.5/libssl.so.3" \
+    OPENSSL_INCLUDE_DIR="$PWD/openssl-3.5.5/include" \
+        OPENSSL_LIB_DIR="$PWD/openssl-3.5.5" \
+        LD_LIBRARY_PATH="$PWD/openssl-3.5.5" \
         RUSTFLAGS="-Z sanitizer=address" \
-        cargo +nightly test --target x86_64-unknown-linux-gnu --features pqc || exit 1
-    
-    LD_PRELOAD="openssl-3.5.5/libcrypto.so.3 openssl-3.5.5/libssl.so.3" \
+        cargo +nightly test --workspace --target x86_64-unknown-linux-gnu $PQC_FEATURES || exit 1
+
+    OPENSSL_INCLUDE_DIR="$PWD/openssl-3.5.5/include" \
+        OPENSSL_LIB_DIR="$PWD/openssl-3.5.5" \
+        LD_LIBRARY_PATH="$PWD/openssl-3.5.5" \
         RUSTFLAGS="-Z sanitizer=leak" \
-        cargo +nightly test --target x86_64-unknown-linux-gnu --features pqc || exit 1
+        cargo +nightly test --workspace --target x86_64-unknown-linux-gnu $PQC_FEATURES || exit 1
 else
     # Basic tests without PQC
-    RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --target x86_64-unknown-linux-gnu || exit 1
-    RUSTFLAGS="-Z sanitizer=leak" cargo +nightly test --target x86_64-unknown-linux-gnu || exit 1
+    RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --workspace --target x86_64-unknown-linux-gnu || exit 1
+    RUSTFLAGS="-Z sanitizer=leak" cargo +nightly test --workspace --target x86_64-unknown-linux-gnu || exit 1
 fi

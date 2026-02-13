@@ -1,6 +1,4 @@
-# bose
-
-Better COSE.
+# COSE sign1/verify1 on OpenSSL
 
 Used purely in research purposes, not intended for production use (yet).
 
@@ -11,6 +9,8 @@ Targeting Azure Linux 4.0 with OpenSSL 3.5, to enable PQC.
 Currently developed on AL 3.0, CI on a cheap Ubuntu image, with optional OpenSSL 3.5 build if needed (label-triggered).
 
 ### How to test for PQC
+
+Check CI workflows for more details.
 
 * Check `scripts/setup-openssl.sh` for how to build OpenSSL from source.
 * Set env (or prepend before `cargo`):

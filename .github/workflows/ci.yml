@@ -49,13 +49,19 @@ jobs:
         shell: bash
         run: |
           set -ex
-          cargo fmt -- --check
+          cargo fmt --all -- --check
 
       - name: "Run tests"
         shell: bash
         run: |
           set -ex
-          cargo test
+          cargo test --workspace
+
+      - name: "Run FFI tests"
+        shell: bash
+        run: |
+          set -ex
+          ./scripts/ffi-test.sh
 
       - name: "Build OpenSSL 3.5"
         if: ${{ (github.event.action == 'labeled' && github.event.label.name == 'test-ossl-3.5') || (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'test-ossl-3.5')) || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
@@ -71,7 +77,17 @@ jobs:
         env:
           OPENSSL_INCLUDE_DIR: ${{ github.workspace }}/openssl-3.5.5/include
           OPENSSL_LIB_DIR: ${{ github.workspace }}/openssl-3.5.5
-          LD_PRELOAD: ${{ github.workspace }}/openssl-3.5.5/libcrypto.so:${{ github.workspace }}/openssl-3.5.5/libssl.so
+          LD_LIBRARY_PATH: ${{ github.workspace }}/openssl-3.5.5
         run: |
           set -ex
-          cargo test --features pqc
+          cargo test --workspace --features cose-openssl/pqc,cose-openssl-ffi/pqc
+
+      - name: "Run FFI tests against OpenSSL 3.5"
+        if: ${{ (github.event.action == 'labeled' && github.event.label.name == 'test-ossl-3.5') || (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'test-ossl-3.5')) || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
+        shell: bash
+        env:
+          OPENSSL_INCLUDE_DIR: ${{ github.workspace }}/openssl-3.5.5/include
+          OPENSSL_LIB_DIR: ${{ github.workspace }}/openssl-3.5.5
+        run: |
+          set -ex
+          ./scripts/ffi-test.sh --pqc

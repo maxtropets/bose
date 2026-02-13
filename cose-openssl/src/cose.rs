@@ -1,24 +1,32 @@
-use crate::ossl_wrappers::{EvpKey, KeyType, WhichEC};
+use crate::ossl_wrappers::{
+    EvpKey, KeyType, WhichEC, ecdsa_der_to_fixed, ecdsa_fixed_to_der,
+};
 use cborrs::cbornondet::*;
 
 #[cfg(feature = "pqc")]
 use crate::ossl_wrappers::WhichMLDSA;
 
-/// Serialize a CBOR item into a byte vector.
+const COSE_SIGN1_TAG: u64 = 18;
+const COSE_HEADER_ALG: u64 = 1;
+const SIG_STRUCTURE1_CONTEXT: &str = "Signature1";
+const CBOR_SIMPLE_VALUE_NULL: u8 = 22;
+
 fn cbor_serialize(item: CborNondet) -> Result<Vec<u8>, String> {
     let sz = cbor_nondet_size(item, usize::MAX)
         .ok_or("Failed to estimate CBOR serialization size")?;
     let mut buf = vec![0u8; sz];
 
-    cbor_nondet_serialize(item, &mut buf)
+    let written = cbor_nondet_serialize(item, &mut buf)
         .ok_or("Failed to serialize CBOR item")?;
+
+    if sz != written {
+        return Err(format!(
+            "Failed to serialize CBOR, written {written} != expected {sz}"
+        ));
+    }
 
     Ok(buf)
 }
-
-const COSE_SIGN1_TAG: u64 = 18;
-const COSE_HEADER_ALG: u64 = 1;
-const SIG_STRUCTURE1_CONTEXT: &str = "Signature1";
 
 fn cose_alg(key: &EvpKey) -> Result<(CborNondetIntKind, u64), String> {
     // EverCBOR starts counting negs from -1, so Neg 7 is -8, for instance.
@@ -137,8 +145,15 @@ pub fn cose_sign1(
     let tbs = sig_structure(&phdr_bytes, payload)?;
     let sig = crate::sign::sign(key, &tbs)?;
 
+    // ECDSA: convert from DER to COSE fixed-size (r || s) per RFC 9053 s2.1.
+    let sig = match &key.typ {
+        KeyType::EC(_) => ecdsa_der_to_fixed(&sig, key.ec_field_size()?)?,
+        #[cfg(feature = "pqc")]
+        KeyType::MLDSA(_) => sig,
+    };
+
     let payload_item = if detached {
-        cbor_nondet_mk_simple_value(22) // CBOR null
+        cbor_nondet_mk_simple_value(CBOR_SIMPLE_VALUE_NULL)
             .ok_or("Failed to make CBOR null for detached payload")?
     } else {
         cbor_nondet_mk_byte_string(payload)
@@ -223,6 +238,13 @@ pub fn cose_verify1(
         CborNondetView::ByteString { payload } => Ok(payload.to_vec()),
         _ => Err("Signature is not a byte string".to_string()),
     }?;
+
+    // ECDSA: convert from COSE fixed-size (r || s) to DER for OpenSSL.
+    let sig = match &key.typ {
+        KeyType::EC(_) => ecdsa_fixed_to_der(&sig, key.ec_field_size()?)?,
+        #[cfg(feature = "pqc")]
+        KeyType::MLDSA(_) => sig,
+    };
 
     let tbs = sig_structure(&phdr_bytes, &actual_payload)?;
     crate::verify::verify(key, &sig, &tbs)
@@ -323,8 +345,8 @@ mod tests {
         let signing_key = EvpKey::from_der_private(&priv_der).unwrap();
 
         // Export public key DER and reimport for verification
-        let pub_der = original_key.to_der().unwrap();
-        let verification_key = EvpKey::from_der(&pub_der).unwrap();
+        let pub_der = original_key.to_der_public().unwrap();
+        let verification_key = EvpKey::from_der_public(&pub_der).unwrap();
 
         let phdr = hex::decode(TEST_PHDR).unwrap();
         let uhdr = b"\xa0";
@@ -364,8 +386,8 @@ mod tests {
             let signing_key = EvpKey::from_der_private(&priv_der).unwrap();
 
             // Export public key DER and reimport for verification
-            let pub_der = original_key.to_der().unwrap();
-            let verification_key = EvpKey::from_der(&pub_der).unwrap();
+            let pub_der = original_key.to_der_public().unwrap();
+            let verification_key = EvpKey::from_der_public(&pub_der).unwrap();
 
             let phdr = hex::decode(TEST_PHDR).unwrap();
             let uhdr = b"\xa0";
