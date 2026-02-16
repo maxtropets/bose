@@ -42,7 +42,6 @@ jobs:
         run: |
           set -ex
           ./scripts/setup-rust.sh
-          ./scripts/setup-everparse.sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: "Run CI checks"
