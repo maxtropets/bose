@@ -4,7 +4,3 @@ resolver = "3"
 
 [workspace.dependencies]
 openssl-sys = "0.9"
-
-# The everparse repo has multiple crates named "cborrs"; patch to pick nondet.
-[patch."https://github.com/project-everest/everparse"]
-cborrs = { path = ".patched/everparse/src/cbor/pulse/nondet/rust" }

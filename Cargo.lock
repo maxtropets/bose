@@ -3,17 +3,18 @@
 version = 4
 
 [[package]]
-name = "cborrs"
+name = "cborrs-nondet"
 version = "0.1.0"
+source = "git+https://github.com/maxtropets/everparse.git?branch=f%2Funique-cargo-crates#9ca1f94ac68cfd49b6e17c51ce8a80a8658448b3"
 dependencies = [
  "static_assertions",
 ]
 
 [[package]]
 name = "cc"
-version = "1.2.55"
+version = "1.2.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47b26a0954ae34af09b50f0de26458fa95369a0d478d8236d3f93082b219bd29"
+checksum = "aebf35691d1bfb0ac386a69bac2fde4dd276fb618cf8bf4f5318fe285e821bb2"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -23,7 +24,7 @@ dependencies = [
 name = "cose-openssl"
 version = "0.1.0"
 dependencies = [
- "cborrs",
+ "cborrs-nondet",
  "hex",
  "openssl-sys",
 ]
@@ -50,9 +51,9 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "libc"
-version = "0.2.180"
+version = "0.2.182"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcc35a38544a891a5f7c865aca548a982ccb3b8650a5b06d0fd33a10283c56fc"
+checksum = "6800badb6cb2082ffd7b6a67e6125bb39f18782f793520caee8cb8846be06112"
 
 [[package]]
 name = "openssl-sys"

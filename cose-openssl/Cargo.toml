@@ -15,4 +15,4 @@ warnings = "deny"
 [dependencies]
 hex = "0.4"
 openssl-sys.workspace = true
-cborrs = { git = "https://github.com/project-everest/everparse", tag = "v2026.02.04" }
+cborrs-nondet = { git  = "https://github.com/maxtropets/everparse.git", branch = "f/unique-cargo-crates" }

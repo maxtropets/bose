@@ -1,7 +1,7 @@
 use crate::ossl_wrappers::{
     EvpKey, KeyType, WhichEC, ecdsa_der_to_fixed, ecdsa_fixed_to_der,
 };
-use cborrs::cbornondet::*;
+use cborrs_nondet::cbornondet::*;
 
 #[cfg(feature = "pqc")]
 use crate::ossl_wrappers::WhichMLDSA;
