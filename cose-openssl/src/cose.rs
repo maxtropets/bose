@@ -354,7 +354,7 @@ mod tests {
 
         // Sign with DER-reimported private key
         let envelope =
-            cose_sign1(&signing_key, &phdr, uhdr, payload, false).unwrap();\
+            cose_sign1(&signing_key, &phdr, uhdr, payload, false).unwrap();
 
         // Verify with DER-imported public key
         assert!(cose_verify1(&verification_key, &envelope, None).unwrap());
