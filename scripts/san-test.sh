@@ -27,7 +27,7 @@ if ! echo "$LEAK_OUTPUT" | grep -q "LeakSanitizer: detected memory leaks"; then
     exit 1
 fi
 
-PQC_FEATURES="--features cose-openssl/pqc,cose-openssl-ffi/pqc"
+PQC_FEATURES="--features pqc"
 
 # Run tests based on argument
 if [ "${1:-}" = "--pqc" ]; then
