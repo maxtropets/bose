@@ -34,9 +34,7 @@ fn parse_cose_sign1(
     let parsed = CborValue::from_bytes(envelope)?;
 
     let inner = match parsed {
-        CborValue::Tagged { tag, payload } if tag == COSE_SIGN1_TAG => {
-            *payload
-        }
+        CborValue::Tagged { tag, payload } if tag == COSE_SIGN1_TAG => *payload,
         CborValue::Tagged { tag, .. } => {
             return Err(format!(
                 "Wrong COSE tag: expected {COSE_SIGN1_TAG}, got {tag}"
@@ -48,9 +46,7 @@ fn parse_cose_sign1(
     let items = match inner {
         CborValue::Array(items) => items,
         _ => {
-            return Err(
-                "Expected COSE_Sign1 array inside tag".to_string()
-            );
+            return Err("Expected COSE_Sign1 array inside tag".to_string());
         }
     };
 
@@ -67,9 +63,7 @@ fn parse_cose_sign1(
     let phdr_bytes = match phdr {
         CborValue::ByteString(b) => b,
         _ => {
-            return Err(
-                "Protected header is not a byte string".to_string()
-            );
+            return Err("Protected header is not a byte string".to_string());
         }
     };
 
@@ -84,9 +78,7 @@ fn insert_alg_value(
     let mut entries = match phdr {
         CborValue::Map(entries) => entries,
         _ => {
-            return Err(
-                "Protected header is not a CBOR map".to_string()
-            );
+            return Err("Protected header is not a CBOR map".to_string());
         }
     };
 
@@ -175,13 +167,14 @@ fn check_phdr_alg(key: &EvpKey, phdr_bytes: &[u8]) -> Result<(), String> {
     let expected = cose_alg(key)?;
     match alg {
         CborValue::Int(v) if *v == expected => Ok(()),
-        CborValue::Int(_) => Err(
-            "Algorithm mismatch between protected header and key".to_string(),
-        ),
-        _ => Err(
-            "Algorithm value in protected header is not an integer"
-                .to_string(),
-        ),
+        CborValue::Int(_) => {
+            Err("Algorithm mismatch between protected header and key"
+                .to_string())
+        }
+        _ => {
+            Err("Algorithm value in protected header is not an integer"
+                .to_string())
+        }
     }
 }
 
@@ -201,9 +194,7 @@ pub fn cose_verify1(
         None => match cose_payload {
             CborValue::ByteString(b) => b,
             _ => {
-                return Err(
-                    "Embedded payload is not a byte string".to_string()
-                );
+                return Err("Embedded payload is not a byte string".to_string());
             }
         },
     };
@@ -270,8 +261,7 @@ mod tests {
         let uhdr = CborValue::Map(vec![]); // empty map
         let payload = b"Good boy...";
 
-        let envelope =
-            cose_sign1(&key, phdr, uhdr, payload, false).unwrap();
+        let envelope = cose_sign1(&key, phdr, uhdr, payload, false).unwrap();
         assert!(cose_verify1(&key, &envelope, None).unwrap());
     }
 
@@ -313,8 +303,7 @@ mod tests {
         let uhdr = CborValue::Map(vec![]);
         let payload = b"Good boy...";
 
-        let envelope =
-            cose_sign1(&key, phdr, uhdr, payload, true).unwrap();
+        let envelope = cose_sign1(&key, phdr, uhdr, payload, true).unwrap();
 
         // Verify with the detached payload supplied externally.
         assert!(cose_verify1(&key, &envelope, Some(payload)).unwrap());
