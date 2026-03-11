@@ -1,6 +1,18 @@
-[workspace]
-members = ["cose-openssl", "cose-openssl-ffi"]
-resolver = "3"
+[package]
+name = "cose-openssl"
+version = "0.1.0"
+edition = "2024"
 
-[workspace.dependencies]
+[lib]
+crate-type = ["lib"]
+
+[features]
+pqc = []
+
+[lints.rust]
+warnings = "deny"
+
+[dependencies]
+hex = "0.4"
 openssl-sys = "0.9"
+cborrs-nondet = { git  = "https://github.com/maxtropets/everparse.git", branch = "f/unique-cargo-crates" }
