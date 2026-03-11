@@ -30,7 +30,7 @@ fn cbor_serialize(item: CborNondet) -> Result<Vec<u8>, String> {
 
 fn cose_alg(key: &EvpKey) -> Result<(CborNondetIntKind, u64), String> {
     // EverCBOR starts counting negs from -1, so Neg 7 is -8, for instance.
-    // Therefore, substract 1 from the absolute value before convertion.
+    // Therefore, subtract 1 from the absolute value before conversion.
     //
     // https://www.iana.org/assignments/cose/cose.xhtml
     match &key.typ {
