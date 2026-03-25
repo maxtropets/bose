@@ -344,10 +344,13 @@ impl EvpKey {
 
     /// Create an `EvpKey` from a PEM-encoded public key.
     pub fn from_pem_public(pem: &[u8]) -> Result<Self, String> {
+        let pem_len: std::ffi::c_int = pem.len().try_into().map_err(|_| {
+            format!("PEM input too large ({} bytes)", pem.len())
+        })?;
         let key = unsafe {
             let bio = ossl::BIO_new_mem_buf(
                 pem.as_ptr() as *const std::ffi::c_void,
-                pem.len() as std::ffi::c_int,
+                pem_len,
             );
             if bio.is_null() {
                 return Err(format!(
@@ -384,10 +387,13 @@ impl EvpKey {
 
     /// Create an `EvpKey` from a PEM-encoded private key.
     pub fn from_pem_private(pem: &[u8]) -> Result<Self, String> {
+        let pem_len: std::ffi::c_int = pem.len().try_into().map_err(|_| {
+            format!("PEM input too large ({} bytes)", pem.len())
+        })?;
         let key = unsafe {
             let bio = ossl::BIO_new_mem_buf(
                 pem.as_ptr() as *const std::ffi::c_void,
-                pem.len() as std::ffi::c_int,
+                pem_len,
             );
             if bio.is_null() {
                 return Err(format!(
@@ -440,7 +446,11 @@ impl EvpKey {
             let len = ossl::BIO_get_mem_data(bio, &mut data_ptr);
             if len <= 0 || data_ptr.is_null() {
                 ossl::BIO_free_all(bio);
-                return Err("BIO_get_mem_data returned empty".to_string());
+                return Err(format!(
+                    "BIO_get_mem_data returned {}: {}",
+                    len,
+                    ossl_err_string()
+                ));
             }
             let pem =
                 std::slice::from_raw_parts(data_ptr as *const u8, len as usize)
@@ -477,7 +487,11 @@ impl EvpKey {
             let len = ossl::BIO_get_mem_data(bio, &mut data_ptr);
             if len <= 0 || data_ptr.is_null() {
                 ossl::BIO_free_all(bio);
-                return Err("BIO_get_mem_data returned empty".to_string());
+                return Err(format!(
+                    "BIO_get_mem_data returned {}: {}",
+                    len,
+                    ossl_err_string()
+                ));
             }
             let pem =
                 std::slice::from_raw_parts(data_ptr as *const u8, len as usize)
