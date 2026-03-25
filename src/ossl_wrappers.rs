@@ -428,6 +428,82 @@ impl EvpKey {
         Ok(EvpKey { key, typ })
     }
 
+    /// Extract the public key from a PEM-encoded X.509 certificate.
+    pub fn from_pem_cert(pem: &[u8]) -> Result<Self, String> {
+        let pem_len: std::ffi::c_int = pem.len().try_into().map_err(|_| {
+            format!("Certificate too large ({} bytes)", pem.len())
+        })?;
+
+        unsafe {
+            let bio = ossl::BIO_new_mem_buf(
+                pem.as_ptr() as *const std::ffi::c_void,
+                pem_len,
+            );
+            if bio.is_null() {
+                return Err(format!(
+                    "BIO_new_mem_buf failed: {}",
+                    ossl_err_string()
+                ));
+            }
+            let cert = ossl::PEM_read_bio_X509(
+                bio,
+                ptr::null_mut(),
+                None,
+                ptr::null_mut(),
+            );
+            ossl::BIO_free_all(bio);
+            if cert.is_null() {
+                return Err(format!(
+                    "PEM_read_bio_X509 failed: {}",
+                    ossl_err_string()
+                ));
+            }
+
+            Self::pubkey_from_x509(cert)
+        }
+    }
+
+    /// Extract the public key from a DER-encoded X.509 certificate.
+    pub fn from_der_cert(der: &[u8]) -> Result<Self, String> {
+        unsafe {
+            let mut ptr = der.as_ptr();
+            let cert = ossl::d2i_X509(
+                ptr::null_mut(),
+                &mut ptr,
+                der.len() as std::ffi::c_long,
+            );
+            if cert.is_null() {
+                return Err(format!("d2i_X509 failed: {}", ossl_err_string()));
+            }
+
+            Self::pubkey_from_x509(cert)
+        }
+    }
+
+    /// Extract the public key from a parsed X509 and free the cert.
+    unsafe fn pubkey_from_x509(cert: *mut ossl::X509) -> Result<Self, String> {
+        unsafe {
+            let key = ossl::X509_get_pubkey(cert);
+            ossl::X509_free(cert);
+            if key.is_null() {
+                return Err(format!(
+                    "X509_get_pubkey failed: {}",
+                    ossl_err_string()
+                ));
+            }
+
+            let typ = match Self::detect_key_type_raw(key) {
+                Ok(t) => t,
+                Err(e) => {
+                    ossl::EVP_PKEY_free(key);
+                    return Err(e);
+                }
+            };
+
+            Ok(EvpKey { key, typ })
+        }
+    }
+
     /// Export the public key as PEM.
     pub fn to_pem_public(&self) -> Result<Vec<u8>, String> {
         unsafe {
@@ -1153,6 +1229,116 @@ mod tests {
         let err = EvpKey::from_pem_private(b"not a pem").unwrap_err();
         assert!(
             err.starts_with("PEM_read_bio_PrivateKey failed: error:"),
+            "unexpected error: {err}"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Certificate tests
+    // ---------------------------------------------------------------
+
+    /// Build a minimal self-signed certificate from the given key.
+    /// Returns (DER, PEM) of the certificate.
+    fn make_self_signed_cert(key: &EvpKey) -> (Vec<u8>, Vec<u8>) {
+        unsafe {
+            let cert = ossl::X509_new();
+            assert!(!cert.is_null());
+
+            ossl::ASN1_INTEGER_set(ossl::X509_get_serialNumber(cert), 1);
+            ossl::X509_gmtime_adj(ossl::X509_getm_notBefore(cert), 0);
+            ossl::X509_gmtime_adj(
+                ossl::X509_getm_notAfter(cert),
+                365 * 24 * 3600,
+            );
+            ossl::X509_set_pubkey(cert, key.key);
+            ossl::X509_set_issuer_name(cert, ossl::X509_get_subject_name(cert));
+            let rc = ossl::X509_sign(cert, key.key, key.digest());
+            assert!(rc > 0, "X509_sign failed");
+
+            // DER
+            let mut der_ptr: *mut u8 = ptr::null_mut();
+            let der_len = ossl::i2d_X509(cert, &mut der_ptr);
+            assert!(der_len > 0);
+            let der =
+                std::slice::from_raw_parts(der_ptr, der_len as usize).to_vec();
+            ossl::CRYPTO_free(
+                der_ptr as *mut std::ffi::c_void,
+                concat!(file!(), "\0").as_ptr() as *const i8,
+                line!() as i32,
+            );
+
+            // PEM
+            let bio = ossl::BIO_new(ossl::BIO_s_mem());
+            assert!(!bio.is_null());
+            assert_eq!(ossl::PEM_write_bio_X509(bio, cert), 1);
+            let mut data_ptr: *mut std::ffi::c_char = ptr::null_mut();
+            let pem_len = ossl::BIO_get_mem_data(bio, &mut data_ptr);
+            assert!(pem_len > 0);
+            let pem = std::slice::from_raw_parts(
+                data_ptr as *const u8,
+                pem_len as usize,
+            )
+            .to_vec();
+            ossl::BIO_free_all(bio);
+
+            ossl::X509_free(cert);
+            (der, pem)
+        }
+    }
+
+    #[test]
+    fn from_pem_cert_ec() {
+        let key = EvpKey::new(KeyType::EC(WhichEC::P256)).unwrap();
+        let (_, pem) = make_self_signed_cert(&key);
+        let imported = EvpKey::from_pem_cert(&pem).unwrap();
+        assert!(matches!(imported.typ, KeyType::EC(WhichEC::P256)));
+        assert_eq!(
+            key.to_der_public().unwrap(),
+            imported.to_der_public().unwrap()
+        );
+    }
+
+    #[test]
+    fn from_der_cert_ec() {
+        let key = EvpKey::new(KeyType::EC(WhichEC::P384)).unwrap();
+        let (der, _) = make_self_signed_cert(&key);
+        let imported = EvpKey::from_der_cert(&der).unwrap();
+        assert!(matches!(imported.typ, KeyType::EC(WhichEC::P384)));
+        assert_eq!(
+            key.to_der_public().unwrap(),
+            imported.to_der_public().unwrap()
+        );
+    }
+
+    #[test]
+    fn from_cert_rsa() {
+        let key = EvpKey::new(KeyType::RSA(WhichRSA::PS256)).unwrap();
+        let (der, pem) = make_self_signed_cert(&key);
+
+        let from_der = EvpKey::from_der_cert(&der).unwrap();
+        let from_pem = EvpKey::from_pem_cert(&pem).unwrap();
+        assert!(matches!(from_der.typ, KeyType::RSA(_)));
+        assert!(matches!(from_pem.typ, KeyType::RSA(_)));
+
+        let expected_pub = key.to_der_public().unwrap();
+        assert_eq!(from_der.to_der_public().unwrap(), expected_pub);
+        assert_eq!(from_pem.to_der_public().unwrap(), expected_pub);
+    }
+
+    #[test]
+    fn from_pem_cert_rejects_garbage() {
+        let err = EvpKey::from_pem_cert(b"not a cert").unwrap_err();
+        assert!(
+            err.starts_with("PEM_read_bio_X509 failed: error:"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn from_der_cert_rejects_garbage() {
+        let err = EvpKey::from_der_cert(&[0xde, 0xad, 0xbe, 0xef]).unwrap_err();
+        assert!(
+            err.starts_with("d2i_X509 failed: error:"),
             "unexpected error: {err}"
         );
     }
