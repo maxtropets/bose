@@ -342,6 +342,151 @@ impl EvpKey {
         }
     }
 
+    /// Create an `EvpKey` from a PEM-encoded public key.
+    pub fn from_pem_public(pem: &[u8]) -> Result<Self, String> {
+        let key = unsafe {
+            let bio = ossl::BIO_new_mem_buf(
+                pem.as_ptr() as *const std::ffi::c_void,
+                pem.len() as std::ffi::c_int,
+            );
+            if bio.is_null() {
+                return Err(format!(
+                    "BIO_new_mem_buf failed: {}",
+                    ossl_err_string()
+                ));
+            }
+            let key = ossl::PEM_read_bio_PUBKEY(
+                bio,
+                ptr::null_mut(),
+                None,
+                ptr::null_mut(),
+            );
+            ossl::BIO_free_all(bio);
+            if key.is_null() {
+                return Err(format!(
+                    "PEM_read_bio_PUBKEY failed: {}",
+                    ossl_err_string()
+                ));
+            }
+            key
+        };
+
+        let typ = match Self::detect_key_type_raw(key) {
+            Ok(t) => t,
+            Err(e) => {
+                unsafe { ossl::EVP_PKEY_free(key) };
+                return Err(e);
+            }
+        };
+
+        Ok(EvpKey { key, typ })
+    }
+
+    /// Create an `EvpKey` from a PEM-encoded private key.
+    pub fn from_pem_private(pem: &[u8]) -> Result<Self, String> {
+        let key = unsafe {
+            let bio = ossl::BIO_new_mem_buf(
+                pem.as_ptr() as *const std::ffi::c_void,
+                pem.len() as std::ffi::c_int,
+            );
+            if bio.is_null() {
+                return Err(format!(
+                    "BIO_new_mem_buf failed: {}",
+                    ossl_err_string()
+                ));
+            }
+            let key = ossl::PEM_read_bio_PrivateKey(
+                bio,
+                ptr::null_mut(),
+                None,
+                ptr::null_mut(),
+            );
+            ossl::BIO_free_all(bio);
+            if key.is_null() {
+                return Err(format!(
+                    "PEM_read_bio_PrivateKey failed: {}",
+                    ossl_err_string()
+                ));
+            }
+            key
+        };
+
+        let typ = match Self::detect_key_type_raw(key) {
+            Ok(t) => t,
+            Err(e) => {
+                unsafe { ossl::EVP_PKEY_free(key) };
+                return Err(e);
+            }
+        };
+
+        Ok(EvpKey { key, typ })
+    }
+
+    /// Export the public key as PEM.
+    pub fn to_pem_public(&self) -> Result<Vec<u8>, String> {
+        unsafe {
+            let bio = ossl::BIO_new(ossl::BIO_s_mem());
+            if bio.is_null() {
+                return Err(format!("BIO_new failed: {}", ossl_err_string()));
+            }
+            if ossl::PEM_write_bio_PUBKEY(bio, self.key) != 1 {
+                ossl::BIO_free_all(bio);
+                return Err(format!(
+                    "PEM_write_bio_PUBKEY failed: {}",
+                    ossl_err_string()
+                ));
+            }
+            let mut data_ptr: *mut std::ffi::c_char = ptr::null_mut();
+            let len = ossl::BIO_get_mem_data(bio, &mut data_ptr);
+            if len <= 0 || data_ptr.is_null() {
+                ossl::BIO_free_all(bio);
+                return Err("BIO_get_mem_data returned empty".to_string());
+            }
+            let pem =
+                std::slice::from_raw_parts(data_ptr as *const u8, len as usize)
+                    .to_vec();
+            ossl::BIO_free_all(bio);
+            Ok(pem)
+        }
+    }
+
+    /// Export the private key as PEM (unencrypted PKCS#8).
+    pub fn to_pem_private(&self) -> Result<Vec<u8>, String> {
+        unsafe {
+            let bio = ossl::BIO_new(ossl::BIO_s_mem());
+            if bio.is_null() {
+                return Err(format!("BIO_new failed: {}", ossl_err_string()));
+            }
+            if ossl::PEM_write_bio_PrivateKey(
+                bio,
+                self.key,
+                ptr::null(),
+                ptr::null_mut(),
+                0,
+                None,
+                ptr::null_mut(),
+            ) != 1
+            {
+                ossl::BIO_free_all(bio);
+                return Err(format!(
+                    "PEM_write_bio_PrivateKey failed: {}",
+                    ossl_err_string()
+                ));
+            }
+            let mut data_ptr: *mut std::ffi::c_char = ptr::null_mut();
+            let len = ossl::BIO_get_mem_data(bio, &mut data_ptr);
+            if len <= 0 || data_ptr.is_null() {
+                ossl::BIO_free_all(bio);
+                return Err("BIO_get_mem_data returned empty".to_string());
+            }
+            let pem =
+                std::slice::from_raw_parts(data_ptr as *const u8, len as usize)
+                    .to_vec();
+            ossl::BIO_free_all(bio);
+            Ok(pem)
+        }
+    }
+
     /// Compute the EC field-element byte size from the key's bit size.
     /// Returns an error if the key is not an EC key.
     pub fn ec_field_size(&self) -> Result<usize, String> {
@@ -885,6 +1030,115 @@ mod tests {
         let err = crate::sign::sign(&pub_key, b"test message").unwrap_err();
         assert!(
             err.starts_with("EVP_DigestSign returned 0: error:"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn ec_pem_public_roundtrip() {
+        for which in [WhichEC::P256, WhichEC::P384, WhichEC::P521] {
+            let key = EvpKey::new(KeyType::EC(which)).unwrap();
+            let pem = key.to_pem_public().unwrap();
+            let pem_str = std::str::from_utf8(&pem).unwrap();
+            assert!(
+                pem_str.starts_with("-----BEGIN PUBLIC KEY-----"),
+                "{pem_str}"
+            );
+            let imported = EvpKey::from_pem_public(&pem).unwrap();
+            assert!(matches!(imported.typ, KeyType::EC(_)));
+            // PEM -> DER -> PEM must be identical.
+            let der1 = key.to_der_public().unwrap();
+            let der2 = imported.to_der_public().unwrap();
+            assert_eq!(der1, der2);
+        }
+    }
+
+    #[test]
+    fn ec_pem_private_roundtrip() {
+        for which in [WhichEC::P256, WhichEC::P384, WhichEC::P521] {
+            let key = EvpKey::new(KeyType::EC(which)).unwrap();
+            let pem = key.to_pem_private().unwrap();
+            let pem_str = std::str::from_utf8(&pem).unwrap();
+            assert!(
+                pem_str.starts_with("-----BEGIN PRIVATE KEY-----"),
+                "{pem_str}"
+            );
+            let imported = EvpKey::from_pem_private(&pem).unwrap();
+            assert!(matches!(imported.typ, KeyType::EC(_)));
+            let der1 = key.to_der_private().unwrap();
+            let der2 = imported.to_der_private().unwrap();
+            assert_eq!(der1, der2);
+        }
+    }
+
+    #[test]
+    fn rsa_pem_public_roundtrip() {
+        let key = EvpKey::new(KeyType::RSA(WhichRSA::PS256)).unwrap();
+        let pem = key.to_pem_public().unwrap();
+        let imported = EvpKey::from_pem_public(&pem).unwrap();
+        assert!(matches!(imported.typ, KeyType::RSA(_)));
+        assert_eq!(
+            key.to_der_public().unwrap(),
+            imported.to_der_public().unwrap()
+        );
+    }
+
+    #[test]
+    fn rsa_pem_private_roundtrip() {
+        let key = EvpKey::new(KeyType::RSA(WhichRSA::PS256)).unwrap();
+        let pem = key.to_pem_private().unwrap();
+        let imported = EvpKey::from_pem_private(&pem).unwrap();
+        assert!(matches!(imported.typ, KeyType::RSA(_)));
+        assert_eq!(
+            key.to_der_private().unwrap(),
+            imported.to_der_private().unwrap()
+        );
+    }
+
+    #[test]
+    fn pem_der_pem_public_roundtrip() {
+        let key = EvpKey::new(KeyType::EC(WhichEC::P256)).unwrap();
+        let pem1 = key.to_pem_public().unwrap();
+        let der = EvpKey::from_pem_public(&pem1)
+            .unwrap()
+            .to_der_public()
+            .unwrap();
+        let pem2 = EvpKey::from_der_public(&der)
+            .unwrap()
+            .to_pem_public()
+            .unwrap();
+        assert_eq!(pem1, pem2);
+    }
+
+    #[test]
+    fn pem_der_pem_private_roundtrip() {
+        let key = EvpKey::new(KeyType::EC(WhichEC::P384)).unwrap();
+        let pem1 = key.to_pem_private().unwrap();
+        let der = EvpKey::from_pem_private(&pem1)
+            .unwrap()
+            .to_der_private()
+            .unwrap();
+        let pem2 = EvpKey::from_der_private(&der)
+            .unwrap()
+            .to_pem_private()
+            .unwrap();
+        assert_eq!(pem1, pem2);
+    }
+
+    #[test]
+    fn from_pem_public_rejects_garbage() {
+        let err = EvpKey::from_pem_public(b"not a pem").unwrap_err();
+        assert!(
+            err.starts_with("PEM_read_bio_PUBKEY failed: error:"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn from_pem_private_rejects_garbage() {
+        let err = EvpKey::from_pem_private(b"not a pem").unwrap_err();
+        assert!(
+            err.starts_with("PEM_read_bio_PrivateKey failed: error:"),
             "unexpected error: {err}"
         );
     }
